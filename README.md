@@ -1,10 +1,11 @@
 # Zendure Solarflow Steuerung für ioBroker
 
-Intelligente Lade- und Entladesteuerung für Zendure Solarflow Systeme mit 2 Betriebsmodi, dynamischer Pack-Überwachung, wetter-adaptiven Schwellwerten und Discord-Push-Benachrichtigungen.
+**Version 2.1** – Intelligente Lade- und Entladesteuerung für Zendure Solarflow Systeme mit 2 Betriebsmodi, dynamischer Pack-Überwachung, wetter-adaptiven Schwellwerten und Discord-Push-Benachrichtigungen.
 
 ## 🌟 Features
 
 - **2 Betriebsmodi** – Sonnenzeit (Auto) + Manuell-Laden
+- **Config via Datenpunkte** 🆕 – Keine Code-Änderungen mehr nötig! Webhook, Device IDs & Packs über ioBroker Admin konfigurierbar
 - **Dynamische Pack-Erkennung** – Automatische Anpassung an 1-4+ Akkupacks
 - **Wetter-adaptive Schwellwerte** – Normal/Schlechtwetter für optimalen Zellschutz
 - **Sticky Charging** – Verhindert Regelflackern durch intelligente Laderegelung
@@ -24,51 +25,93 @@ Intelligente Lade- und Entladesteuerung für Zendure Solarflow Systeme mit 2 Bet
 
 ## 🚀 Installation
 
-1. **Script importieren**
+### 1. **Script importieren**
    - Script in ioBroker JavaScript Adapter kopieren
-   - Script aktivieren
+   - Script aktivieren → **Config-DPs werden automatisch angelegt**
 
-2. **User-Config anpassen** (Zeilen 103-140)
-   ```javascript
-   // 1️⃣ ZENDURE DEVICES
-   const HUB_PRODUCT_ID = '73bkTV';
-   const HUB_DEVICE_ID = '2KpL9mW7';     // ANPASSEN!
-   const ACE_PRODUCT_ID = '8bM93H';
-   const ACE_DEVICE_ID = 'Xh5Tn3Q8';     // ANPASSEN!
+### 2. **Config-Datenpunkte ausfüllen** 🆕 NEU in v2.1
 
-   // 2️⃣ BATTERY PACKS (1-4+ möglich)
-   const BATTERY_PACKS = [
-       'BO4KXMFBM270767',   // Pack 1 (AB2000)
-       'CO4KMCJMD800896',   // Pack 2-4 (AB1000)
-       'CO4KMDWMEK01529',
-       'CO4KHNAFN091088'
-   ];
+Das Script erstellt beim ersten Start automatisch alle benötigten Config-DPs unter:
+```
+0_userdata.0.Zendure.Config/
+├── 🔔 Discord_Webhook_URL         (leer = deaktiviert)
+├── 🔌 Hub_Device_ID               (ANPASSEN!!)
+├── 🔌 Ace_Device_ID               (ANPASSEN!!)
+├── 🔋 Battery_Pack_1_ID           (ANPASSEN!!)
+├── 🔋 Battery_Pack_2_ID           (ANPASSEN!!)
+├── 🔋 Battery_Pack_3_ID           (optional)
+├── 🔋 Battery_Pack_4_ID           (optional)
+└── ⚡ Power_Meter_DP              (ANPASSEN!!)
+```
 
-   // 3️⃣ STROMZÄHLER
-   const POWER_METER_DP = 'sonoff.0.Lesekopf.MT691_Power_curr';
+#### 🔍 **So findest du deine IDs:**
 
-   // 4️⃣ ASTRO VARIABLEN
-   const ASTRO_SUNRISE_DP = 'javascript.0.variables.astro.sunrise';
-   const ASTRO_SUNSET_DP = 'javascript.0.variables.astro.sunset';
-
-   // 5️⃣ LOGGING & DEBUG
-   const LOG_LEVEL = 2;  // 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
-
-   // 6️⃣ DISCORD BENACHRICHTIGUNGEN (optional)
-   const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/YOUR_WEBHOOK_URL';
-   const DISCORD_NOTIFICATIONS_ENABLED = false;  // true aktivieren
-   const DISCORD_NOTIFY = {
-       notladen: true,           // Notladen aktiviert
-       akkuLeer: true,           // Akku-Leer-Schutz aktiviert
-       watchdogAlarm: true,      // Watchdog-Alarm (Sensor-Ausfall)
-       errorCritical: true,      // 5 Fehler erreicht
-       scriptStopped: true       // Script gestoppt
-   };
+**Zendure Device IDs:**
+1. ioBroker → Objekte → `zendure-solarflow.0`
+2. Expandiere die Ordner-Struktur:
+   ```
+   zendure-solarflow.0/
+   ├── 73bkTV/          → HUB Product ID (immer gleich)
+   │   └── A1B2C3D4/    → Deine HUB Device ID ✅ KOPIEREN
+   └── 8bM93H/          → ACE Product ID (immer gleich)
+       └── X1Y2Z3A4/    → Deine ACE Device ID ✅ KOPIEREN
    ```
 
-3. **Datenpunkte werden automatisch erstellt**
+**Battery Pack IDs:**
+1. Navigiere zu: `zendure-solarflow.0.73bkTV.{DEINE_HUB_ID}.packData`
+2. Dort siehst du deine Packs (z.B.):
+   ```
+   packData/
+   ├── AB1CD2EF3GH4567/   → Pack 1 ✅ KOPIEREN
+   ├── IJ5KL6MN7OP8901/   → Pack 2 ✅ KOPIEREN
+   ├── QR2ST3UV4WX5678/   → Pack 3 ✅ KOPIEREN
+   └── YZ6AB7CD8EF9012/   → Pack 4 ✅ KOPIEREN
+   ```
+
+**Power Meter Datenpunkt:**
+- Voller Pfad zu deinem Stromzähler-DP (z.B. `adapter.0.device.power_current`)
+- Muss **positiv = Bezug**, **negativ = Einspeisung** liefern
+
+#### ✏️ **Config-DPs ausfüllen:**
+
+Gehe zu: `0_userdata.0.Zendure.Config/` und trage ein:
+
+| Config-DP | Beispiel-Wert | Pflicht? |
+|-----------|---------------|----------|
+| `Hub_Device_ID` | `A1B2C3D4` | ✅ Ja |
+| `Ace_Device_ID` | `X1Y2Z3A4` | ✅ Ja |
+| `Battery_Pack_1_ID` | `AB1CD2EF3GH4567` | ✅ Ja (min. 2) |
+| `Battery_Pack_2_ID` | `IJ5KL6MN7OP8901` | ✅ Ja (min. 2) |
+| `Battery_Pack_3_ID` | `QR2ST3UV4WX5678` | ⚪ Optional |
+| `Battery_Pack_4_ID` | `YZ6AB7CD8EF9012` | ⚪ Optional |
+| `Power_Meter_DP` | `adapter.0.device.power_current` | ✅ Ja |
+| `Discord_Webhook_URL` | `https://discord.com/api/webhooks/...` | ⚪ Optional |
+
+**⚠️ Wichtig:** DPs die auf "ANPASSEN!!" stehen MÜSSEN ausgefüllt werden! Das Script stoppt automatisch wenn Pflicht-Werte fehlen und zeigt eine klare Fehlermeldung mit Anleitung.
+
+### 3. **Script neu starten**
+
+Nach dem Ausfüllen der Config-DPs:
+- Script einmal stoppen & neu starten
+- Im Log erscheint: ✅ `Config-DPs erfolgreich geladen - Script bereit!`
+- Falls Config fehlt: 🚨 Script stoppt automatisch und zeigt detaillierte Fehlermeldung mit Anleitung
+
+### 4. **Alte Installation (v2.0 → v2.1 Update)?**
+
+Falls du bereits v2.0 im Einsatz hast:
+1. Script-Code durch v2.1 ersetzen
+2. Beim ersten Start werden Config-DPs automatisch angelegt (mit "ANPASSEN!!")
+3. Fülle die Config-DPs wie oben beschrieben aus
+4. Script neu starten → Config wird geladen
+
+**🆕 Neu in v2.1:** Keine Hard-Coded Werte mehr im Script-Code! Alle Hardware-Konfiguration erfolgt über Config-DPs.
+
+---
+
+### 5. **Datenpunkte (automatisch erstellt)**
    ```
    0_userdata.0.Zendure/
+   ├── Config/       → 🆕 Hardware-Konfiguration (Device IDs, Packs, Sensoren)
    ├── Status/       → Script-Ausgaben (Modus, Akku-Status, Alarm)
    ├── Steuerung/    → Benutzer-Konfiguration (Modus, Schwellwerte, etc.)
    ├── Persist/      → Interne Variablen (Last-States, Error-Counter)
@@ -121,13 +164,12 @@ Alle Einstellungen erfolgen über Datenpunkte in `0_userdata.0.Zendure.Steuerung
    - Discord Server → Servereinstellungen → Integrationen → Webhooks
    - Neuer Webhook → Kanal auswählen → URL kopieren
 
-2. **Im Script konfigurieren:**
-   ```javascript
-   const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/...';
-   const DISCORD_NOTIFICATIONS_ENABLED = true;
-   ```
+2. **Im Config-DP eintragen:** 🆕 v2.1
+   - Gehe zu: `0_userdata.0.Zendure.Config.Discord_Webhook_URL`
+   - Trage die Webhook-URL ein
+   - Aktiviere im Script (Zeile 95): `DISCORD_NOTIFICATIONS_ENABLED = true`
 
-3. **Benachrichtigungen aktivieren/deaktivieren:**
+3. **Benachrichtigungen aktivieren/deaktivieren (im Script):**
    ```javascript
    const DISCORD_NOTIFY = {
        notladen: true,           // ⚠️ Notladen aktiviert (kritische Spannung)

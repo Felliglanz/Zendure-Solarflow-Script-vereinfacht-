@@ -1,19 +1,20 @@
 # Zendure Solarflow Steuerung für ioBroker
 
-**Version 2.1** – Intelligente Lade- und Entladesteuerung für Zendure Solarflow Systeme mit 2 Betriebsmodi, dynamischer Pack-Überwachung, wetter-adaptiven Schwellwerten und Discord-Push-Benachrichtigungen.
+**Version 2.0 STABLE** – Intelligente Lade- und Entladesteuerung für Zendure Solarflow Systeme mit 2 Betriebsmodi, dynamischer Pack-Überwachung, gehärteten Sicherheitsfunktionen und Discord-Push-Benachrichtigungen.
 
 ## 🌟 Features
 
 - **2 Betriebsmodi** – Sonnenzeit (Auto) + Manuell-Laden
-- **Config via Datenpunkte** 🆕 – Keine Code-Änderungen mehr nötig! Webhook, Device IDs & Packs über ioBroker Admin konfigurierbar
-- **Dynamische Pack-Erkennung** – Automatische Anpassung an 1-4+ Akkupacks
+- **Gehärtete Sicherheit** 🆕 – Notladen funktioniert IMMER (auch bei Script-Stop)
+- **Safe-Stop-Mechanismus** 🆕 – Bei Fehler: Device automatisch auf Standby (0W)
+- **Sicherer MinVol-Fallback** 🆕 – Bei Sensor-Ausfall: 2.0V statt 3.5V (erzwingt Notladen)
+- **Dynamische Pack-Erkennung** – Automatische Anpassung an 2-4+ Akkupacks
 - **Wetter-adaptive Schwellwerte** – Normal/Schlechtwetter für optimalen Zellschutz
 - **Sticky Charging** – Verhindert Regelflackern durch intelligente Laderegelung
 - **Discord-Benachrichtigungen** – Push-Nachrichten für kritische Events mit Spam-Schutz
 - **Multi-Level Logging** – ERROR/WARN/INFO/DEBUG für bessere Fehlersuche
-- **Error Recovery** – Automatischer Stop nach 5 Fehlern
-- **Intelligenter Watchdog** – MinVol-Überwachung nur bei aktiver Last
-- **Notladen & Akku-Leer-Schutz** – Automatische Sicherheitsfunktionen bei allen Spannungsbereichen
+- **Error Recovery** – Automatischer Safe-Stop nach 5 Fehlern
+- **Notfall-Bypass** 🆕 – Notladen hat absolute Priorität (ignoriert Stop-Flag bei Gefahr)
 
 ## 📋 Voraussetzungen
 
@@ -25,24 +26,29 @@
 
 ## 🚀 Installation
 
-### 1. **Script importieren**
-   - Script in ioBroker JavaScript Adapter kopieren
-   - Script aktivieren → **Config-DPs werden automatisch angelegt**
+### 1. **Script-Code anpassen**
+   Öffne das Script und passe die USER KONFIGURATION (Zeile 73-109) an:
 
-### 2. **Config-Datenpunkte ausfüllen** 🆕 NEU in v2.1
+   ```javascript
+   // 1️⃣ ZENDURE DEVICES
+   const HUB_DEVICE_ID = 'xxxxxxxx';     // Deine HUB Device-ID
+   const ACE_DEVICE_ID = 'xxxxxxxx';     // Deine ACE Device-ID
 
-Das Script erstellt beim ersten Start automatisch alle benötigten Config-DPs unter:
-```
-0_userdata.0.Zendure.Config/
-├── 🔔 Discord_Webhook_URL         (leer = deaktiviert)
-├── 🔌 Hub_Device_ID               (ANPASSEN!!)
-├── 🔌 Ace_Device_ID               (ANPASSEN!!)
-├── 🔋 Battery_Pack_1_ID           (ANPASSEN!!)
-├── 🔋 Battery_Pack_2_ID           (ANPASSEN!!)
-├── 🔋 Battery_Pack_3_ID           (optional)
-├── 🔋 Battery_Pack_4_ID           (optional)
-└── ⚡ Power_Meter_DP              (ANPASSEN!!)
-```
+   // 2️⃣ BATTERY PACKS (2-4+ möglich)
+   const BATTERY_PACKS = [
+       'xxxxxxxxxxxxxxx',  // Pack 1
+       'xxxxxxxxxxxxxxx',  // Pack 2
+       'xxxxxxxxxxxxxxx',  // Pack 3 (optional)
+       'xxxxxxxxxxxxxxx'   // Pack 4 (optional)
+   ];
+
+   // 3️⃣ STROMZÄHLER
+   const POWER_METER_DP = 'sonoff.0.Lesekopf.MT691_Power_curr';
+
+   // 4️⃣ DISCORD (optional)
+   const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/yourWebHook';
+   const DISCORD_NOTIFICATIONS_ENABLED = true;  // true = aktiv
+   ```
 
 #### 🔍 **So findest du deine IDs:**
 
@@ -52,66 +58,27 @@ Das Script erstellt beim ersten Start automatisch alle benötigten Config-DPs un
    ```
    zendure-solarflow.0/
    ├── 73bkTV/          → HUB Product ID (immer gleich)
-   │   └── A1B2C3D4/    → Deine HUB Device ID ✅ KOPIEREN
+   │   └── DEINE_ID/    → Deine HUB Device ID ✅ KOPIEREN
    └── 8bM93H/          → ACE Product ID (immer gleich)
-       └── X1Y2Z3A4/    → Deine ACE Device ID ✅ KOPIEREN
+       └── DEINE_ID/    → Deine ACE Device ID ✅ KOPIEREN
    ```
 
 **Battery Pack IDs:**
 1. Navigiere zu: `zendure-solarflow.0.73bkTV.{DEINE_HUB_ID}.packData`
-2. Dort siehst du deine Packs (z.B.):
-   ```
-   packData/
-   ├── AB1CD2EF3GH4567/   → Pack 1 ✅ KOPIEREN
-   ├── IJ5KL6MN7OP8901/   → Pack 2 ✅ KOPIEREN
-   ├── QR2ST3UV4WX5678/   → Pack 3 ✅ KOPIEREN
-   └── YZ6AB7CD8EF9012/   → Pack 4 ✅ KOPIEREN
-   ```
+2. Dort siehst du deine Packs – kopiere die IDs in das BATTERY_PACKS Array
 
 **Power Meter Datenpunkt:**
-- Voller Pfad zu deinem Stromzähler-DP (z.B. `adapter.0.device.power_current`)
+- Voller Pfad zu deinem Stromzähler-DP
 - Muss **positiv = Bezug**, **negativ = Einspeisung** liefern
 
-#### ✏️ **Config-DPs ausfüllen:**
+### 2. **Script in ioBroker importieren**
+   - Script in ioBroker JavaScript Adapter kopieren
+   - Script aktivieren → **Datenpunkte werden automatisch angelegt**
 
-Gehe zu: `0_userdata.0.Zendure.Config/` und trage ein:
-
-| Config-DP | Beispiel-Wert | Pflicht? |
-|-----------|---------------|----------|
-| `Hub_Device_ID` | `A1B2C3D4` | ✅ Ja |
-| `Ace_Device_ID` | `X1Y2Z3A4` | ✅ Ja |
-| `Battery_Pack_1_ID` | `AB1CD2EF3GH4567` | ✅ Ja (min. 2) |
-| `Battery_Pack_2_ID` | `IJ5KL6MN7OP8901` | ✅ Ja (min. 2) |
-| `Battery_Pack_3_ID` | `QR2ST3UV4WX5678` | ⚪ Optional |
-| `Battery_Pack_4_ID` | `YZ6AB7CD8EF9012` | ⚪ Optional |
-| `Power_Meter_DP` | `adapter.0.device.power_current` | ✅ Ja |
-| `Discord_Webhook_URL` | `https://discord.com/api/webhooks/...` | ⚪ Optional |
-
-**⚠️ Wichtig:** DPs die auf "ANPASSEN!!" stehen MÜSSEN ausgefüllt werden! Das Script stoppt automatisch wenn Pflicht-Werte fehlen und zeigt eine klare Fehlermeldung mit Anleitung.
-
-### 3. **Script neu starten**
-
-Nach dem Ausfüllen der Config-DPs:
-- Script einmal stoppen & neu starten
-- Im Log erscheint: ✅ `Config-DPs erfolgreich geladen - Script bereit!`
-- Falls Config fehlt: 🚨 Script stoppt automatisch und zeigt detaillierte Fehlermeldung mit Anleitung
-
-### 4. **Alte Installation (v2.0 → v2.1 Update)?**
-
-Falls du bereits v2.0 im Einsatz hast:
-1. Script-Code durch v2.1 ersetzen
-2. Beim ersten Start werden Config-DPs automatisch angelegt (mit "ANPASSEN!!")
-3. Fülle die Config-DPs wie oben beschrieben aus
-4. Script neu starten → Config wird geladen
-
-**🆕 Neu in v2.1:** Keine Hard-Coded Werte mehr im Script-Code! Alle Hardware-Konfiguration erfolgt über Config-DPs.
-
----
-
-### 5. **Datenpunkte (automatisch erstellt)**
+### 3. **Datenpunkte prüfen**
+   Nach dem ersten Start werden automatisch angelegt:
    ```
    0_userdata.0.Zendure/
-   ├── Config/       → 🆕 Hardware-Konfiguration (Device IDs, Packs, Sensoren)
    ├── Status/       → Script-Ausgaben (Modus, Akku-Status, Alarm)
    ├── Steuerung/    → Benutzer-Konfiguration (Modus, Schwellwerte, etc.)
    ├── Persist/      → Interne Variablen (Last-States, Error-Counter)
@@ -164,12 +131,11 @@ Alle Einstellungen erfolgen über Datenpunkte in `0_userdata.0.Zendure.Steuerung
    - Discord Server → Servereinstellungen → Integrationen → Webhooks
    - Neuer Webhook → Kanal auswählen → URL kopieren
 
-2. **Im Config-DP eintragen:** 🆕 v2.1
-   - Gehe zu: `0_userdata.0.Zendure.Config.Discord_Webhook_URL`
-   - Trage die Webhook-URL ein
-   - Aktiviere im Script (Zeile 95): `DISCORD_NOTIFICATIONS_ENABLED = true`
+2. **Im Script eintragen:**
+   - Zeile 108: Webhook-URL eintragen
+   - Zeile 109: `DISCORD_NOTIFICATIONS_ENABLED = true`
 
-3. **Benachrichtigungen aktivieren/deaktivieren (im Script):**
+3. **Benachrichtigungen aktivieren/deaktivieren (Zeile 112-118):**
    ```javascript
    const DISCORD_NOTIFY = {
        notladen: true,           // ⚠️ Notladen aktiviert (kritische Spannung)
@@ -320,7 +286,23 @@ const LOG_LEVEL = 2;  // Im User-Config-Block
 ```
 
 ## 📦 Changelog
+### Version 2.0 STABLE (2025-12-26) 🛡️
+**🔒 Kritische Sicherheits-Härtungen:**
+- **Notfall-Bypass**: Notladen funktioniert IMMER - auch bei Script-Stop (Stop-Flag wird ignoriert bei kritischem minVol <= 3.0V)
+- **Safe-Stop-Mechanismus**: Bei Error Counter >= 5 wird Device ERST auf Standby (0W/0W) gesetzt, DANN Stop-Flag
+- **Kontinuierlicher Safe-Stop**: Bei gesetztem Stop-Flag wird jede Minute Device auf 0W/0W gesetzt (verhindert unbeabsichtigte Entladung)
+- **Sicherer MinVol-Fallback**: Bei Sensor-Ausfall (NULL) → Fallback 2.0V statt 3.5V (erzwingt Notladen statt Weiter-Entladung)
+- **Erweiterte MinVol-Range**: Akzeptiert kritische Werte unter 2.5V (vorher: Fallback auf 3.5V verhinderte Notladen)
 
+**🔧 Verbesserungen:**
+- Discord-Alarm "NOTFALL-NOTLADEN" wenn Stop=TRUE aber minVol kritisch
+- Watchdog-Alarm bei MinVol-Sensor-Ausfall
+- Detailliertes Logging bei Safe-Stop (welche Werte gesetzt werden)
+- Log-Output: "🔋 MinVol: X.XXXV (Notladen bei <= 3.0V, Entladestopp bei <= 3.1V)" bei jedem Durchlauf
+
+**🐛 Bugfix:**
+- Verhindert Tiefentladung wenn Script durch Error Counter gestoppt wurde
+- Alle Sicherheitsfunktionen bleiben auch bei Stop-Flag aktiv
 ### Version 2.01 (2025-12-23)
 **🔔 Discord-Integration & UI-Verbesserungen:**
 

@@ -1,7 +1,7 @@
 /************************************************************
  * ZENDURE LADE-/ENTLADELOGIK – ioBroker JavaScript
  * ----------------------------------------------------------
- * Version: 2.01 | Datum: 2025-12-23
+ * Version: 2.1 | Datum: 2025-12-26
  * 
  * Beschreibung:
  *  Vereinfachte Steuerung eines Zendure Solarflow Systems mit 2 Modi,
@@ -73,41 +73,26 @@
  ************************************************************/
 
 // ╔══════════════════════════════════════════════════════════════════════╗
-// ║                    🔧 USER KONFIGURATION                              ║
-// ║  WICHTIG: Diese Werte MÜSSEN an deine Anlage angepasst werden!      ║
-// ║  Weitere Einstellungen: ioBroker DPs in 0_userdata.0.Zendure.Steuerung ║
+// ║                    🔧 KONFIGURATION                                     ║
+// ║  Alle Einstellungen erfolgen über ioBroker Datenpunkte!              ║
+// ║  0_userdata.0.Zendure.Config/ → Device IDs, Packs, Sensoren         ║
+// ║  0_userdata.0.Zendure.Steuerung/ → Betriebsparameter                 ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 
-// 1️⃣ ZENDURE DEVICES
+// ✅ ADAPTER & PRODUCT IDs (statisch, bei allen Zendure-Geräten gleich)
 const ZENDURE_ADAPTER = 'zendure-solarflow.0';
 const HUB_PRODUCT_ID = '73bkTV';      // HUB1200 Product-ID
-const HUB_DEVICE_ID = 'XXXXXXXX';     // HUB1200 Device-ID (ANPASSEN!)
 const ACE_PRODUCT_ID = '8bM93H';      // ACE1500 Product-ID
-const ACE_DEVICE_ID = 'XXXXXXXX';     // ACE1500 Device-ID (ANPASSEN!)
 
-// 2️⃣ BATTERY PACKS (2-4+ möglich)
-// Pack-IDs findest du unter: zendure-solarflow.0.{HUB}.{DEVICE}.packData.{PACK_ID}.minVol
-const BATTERY_PACKS = [
-    'PACK_ID_1',           // Pack 1 Seriennummer (ANPASSEN!)
-    'PACK_ID_2',           // Pack 2 Seriennummer (ANPASSEN!)
-    'PACK_ID_3',           // Pack 3 Seriennummer (ANPASSEN!)
-    'PACK_ID_4'            // Pack 4 Seriennummer (ANPASSEN!)
-];
-
-// 3️⃣ STROMZÄHLER (positiv = Bezug, negativ = Einspeisung)
-// Beispiele: Sonoff POWR3, Shelly 3EM, Tasmota
-const POWER_METER_DP = 'sonoff.0.Lesekopf.MT691_Power_curr';
-
-// 4️⃣ ASTRO VARIABLEN (werden vom JS-Adapter erstellt)
+// ✅ ASTRO VARIABLEN (Standard-Pfade, normalerweise bei allen gleich)
 const ASTRO_SUNRISE_DP = 'javascript.0.variables.astro.sunrise';
 const ASTRO_SUNSET_DP = 'javascript.0.variables.astro.sunset';
 
-// 5️⃣ LOGGING & DEBUG
+// ✅ LOGGING & DEBUG
 const LOG_LEVEL = 2;          // 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
 
-// 6️⃣ DISCORD BENACHRICHTIGUNGEN (optional)
-const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN';
-const DISCORD_NOTIFICATIONS_ENABLED = false;  // Master-Schalter: true = aktiv, false = alle deaktiviert
+// ✅ DISCORD BENACHRICHTIGUNGEN (Master-Schalter & Event-Filter)
+const DISCORD_NOTIFICATIONS_ENABLED = true;  // Master-Schalter: true = aktiv, false = alle deaktiviert
 
 // Welche Benachrichtigungen sollen gesendet werden? (einzeln konfigurierbar)
 const DISCORD_NOTIFY = {
@@ -124,6 +109,110 @@ const DISCORD_SPAM_PROTECTION_MIN = 15;  // Gleiche Meldung max. alle 15 Min
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  ⚠️  AB HIER KEINE ÄNDERUNGEN NÖTIG - Über ioBroker DPs konfigurieren ║
 // ╚══════════════════════════════════════════════════════════════════════╝
+
+// ✅ CONFIG-DPs LADEN (EINZIGE Quelle für Hardware-Config)
+// Script stoppt wenn Config fehlt oder ungültig ist!
+let CONFIG_LOADED = false;
+let EFFECTIVE_WEBHOOK_URL = '';
+let EFFECTIVE_HUB_DEVICE_ID = '';
+let EFFECTIVE_ACE_DEVICE_ID = '';
+let EFFECTIVE_BATTERY_PACKS = [];
+let EFFECTIVE_POWER_METER_DP = '';
+
+(function loadConfigFromDPs() {
+    const errors = [];
+    const warnings = [];
+    
+    try {
+        // Webhook (optional - falls leer: Discord-Benachrichtigungen deaktiviert)
+        const webhookDP = getState('0_userdata.0.Zendure.Config.Discord_Webhook_URL')?.val;
+        if (webhookDP && webhookDP.trim() !== '' && webhookDP !== 'ANPASSEN!!') {
+            EFFECTIVE_WEBHOOK_URL = webhookDP.trim();
+            logInfo('✅ Config: Discord Webhook geladen');
+        } else {
+            logInfo('ℹ️ Config: Discord Webhook nicht gesetzt - Benachrichtigungen deaktiviert');
+        }
+        
+        // Hub Device ID (PFLICHT)
+        const hubDevDP = getState('0_userdata.0.Zendure.Config.Hub_Device_ID')?.val;
+        if (hubDevDP && hubDevDP.trim() !== '' && hubDevDP !== 'ANPASSEN!!') {
+            EFFECTIVE_HUB_DEVICE_ID = hubDevDP.trim();
+            logInfo(`✅ Config: Hub Device ID = ${EFFECTIVE_HUB_DEVICE_ID}`);
+        } else {
+            errors.push('❌ Hub_Device_ID fehlt oder = "ANPASSEN!!"');
+        }
+        
+        // ACE Device ID (PFLICHT)
+        const aceDevDP = getState('0_userdata.0.Zendure.Config.Ace_Device_ID')?.val;
+        if (aceDevDP && aceDevDP.trim() !== '' && aceDevDP !== 'ANPASSEN!!') {
+            EFFECTIVE_ACE_DEVICE_ID = aceDevDP.trim();
+            logInfo(`✅ Config: ACE Device ID = ${EFFECTIVE_ACE_DEVICE_ID}`);
+        } else {
+            errors.push('❌ Ace_Device_ID fehlt oder = "ANPASSEN!!"');
+        }
+        
+        // Battery Packs (PFLICHT: min. 2)
+        const packIDs = [
+            getState('0_userdata.0.Zendure.Config.Battery_Pack_1_ID')?.val,
+            getState('0_userdata.0.Zendure.Config.Battery_Pack_2_ID')?.val,
+            getState('0_userdata.0.Zendure.Config.Battery_Pack_3_ID')?.val,
+            getState('0_userdata.0.Zendure.Config.Battery_Pack_4_ID')?.val
+        ].filter(p => p && p.trim() !== '' && p !== 'ANPASSEN!!');
+        
+        if (packIDs.length >= 2) {
+            EFFECTIVE_BATTERY_PACKS = packIDs;
+            logInfo(`✅ Config: ${packIDs.length} Battery Packs geladen`);
+        } else if (packIDs.length === 1) {
+            errors.push('❌ Nur 1 Battery Pack - mindestens 2 erforderlich!');
+        } else {
+            errors.push('❌ Keine Battery Packs definiert - mindestens 2 erforderlich!');
+        }
+        
+        // Power Meter DP (PFLICHT)
+        const meterDP = getState('0_userdata.0.Zendure.Config.Power_Meter_DP')?.val;
+        if (meterDP && meterDP.trim() !== '' && meterDP !== 'ANPASSEN!!') {
+            EFFECTIVE_POWER_METER_DP = meterDP.trim();
+            logInfo(`✅ Config: Power Meter DP = ${EFFECTIVE_POWER_METER_DP}`);
+        } else {
+            errors.push('❌ Power_Meter_DP fehlt oder = "ANPASSEN!!"');
+        }
+        
+        // Fehlerbehandlung
+        if (errors.length > 0) {
+            logError('='.repeat(70));
+            logError('🚨 CONFIG FEHLT - Script kann nicht starten!');
+            logError('='.repeat(70));
+            errors.forEach(err => logError(err));
+            logError('');
+            logError('🔧 Bitte fülle folgende Datenpunkte aus:');
+            logError('   0_userdata.0.Zendure.Config.Hub_Device_ID');
+            logError('   0_userdata.0.Zendure.Config.Ace_Device_ID');
+            logError('   0_userdata.0.Zendure.Config.Battery_Pack_1_ID');
+            logError('   0_userdata.0.Zendure.Config.Battery_Pack_2_ID');
+            logError('   0_userdata.0.Zendure.Config.Power_Meter_DP');
+            logError('');
+            logError('📚 Anleitung: Siehe README.md Abschnitt "Installation"');
+            logError('='.repeat(70));
+            
+            // Script-Stop setzen
+            setState('0_userdata.0.Zendure.Steuerung.Stop', true, true);
+            CONFIG_LOADED = false;
+            return;
+        }
+        
+        CONFIG_LOADED = true;
+        logInfo('✅ ✅ ✅ Config-DPs erfolgreich geladen - Script bereit!');
+        
+    } catch (err) {
+        logError(`🚨 Kritischer Fehler beim Laden der Config: ${err}`);
+        logError('Script wird gestoppt. Bitte Config-DPs prüfen!');
+        setState('0_userdata.0.Zendure.Steuerung.Stop', true, true);
+        CONFIG_LOADED = false;
+    }
+})();
+
+// Discord Webhook aus Config übernehmen
+const DISCORD_WEBHOOK_URL_EFFECTIVE = EFFECTIVE_WEBHOOK_URL;
 
 // ✅ LOGGING SYSTEM
 function logError(msg) { log(`❌ ERROR: ${msg}`); }
@@ -143,7 +232,7 @@ const discordLastSent = {};
  */
 function sendDiscordNotification(message, level = 'info', notifyType = null) {
     // Master-Schalter prüfen
-    if (!DISCORD_NOTIFICATIONS_ENABLED || !DISCORD_WEBHOOK_URL) return;
+    if (!DISCORD_NOTIFICATIONS_ENABLED || !DISCORD_WEBHOOK_URL_EFFECTIVE) return;
     
     // Spam-Schutz: Prüfe ob genug Zeit seit letzter gleicher Meldung vergangen ist
     if (notifyType && discordLastSent[notifyType]) {
@@ -181,7 +270,7 @@ function sendDiscordNotification(message, level = 'info', notifyType = null) {
         // node-fetch für HTTP POST Request an Discord Webhook (ioBroker-kompatibel)
         const fetch = require('node-fetch');
         
-        fetch(DISCORD_WEBHOOK_URL, {
+        fetch(DISCORD_WEBHOOK_URL_EFFECTIVE, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -328,13 +417,13 @@ const DEFAULT_SUNSET_OFFSET_MIN = 0;
 // ----------------------------------------------------------
 // ✅ DATENPUNKTE (aus User-Config generiert)
 // ----------------------------------------------------------
-// Basis-Pfade aus User-Config
-const ZENDURE_BASE = `${ZENDURE_ADAPTER}.${HUB_PRODUCT_ID}.${HUB_DEVICE_ID}`;
+// Basis-Pfade aus User-Config (mit Effective IDs aus Config-DPs)
+const ZENDURE_BASE = `${ZENDURE_ADAPTER}.${HUB_PRODUCT_ID}.${EFFECTIVE_HUB_DEVICE_ID}`;
 const ZENDURE_PACK_BASE = `${ZENDURE_BASE}.packData`;
 
-// Dynamisch Pack-DPs aus BATTERY_PACKS Array erzeugen
+// Dynamisch Pack-DPs aus EFFECTIVE_BATTERY_PACKS Array erzeugen (aus Config-DPs)
 const packDPs = {};
-BATTERY_PACKS.forEach((packId, index) => {
+EFFECTIVE_BATTERY_PACKS.forEach((packId, index) => {
     if (packId && packId.trim() !== '') {
         packDPs[`pack${index + 1}MinVol`] = `${ZENDURE_PACK_BASE}.${packId}.minVol`;
     }
@@ -342,7 +431,7 @@ BATTERY_PACKS.forEach((packId, index) => {
 
 const dp = {
     // Sensoren
-    hausPower: POWER_METER_DP,
+    hausPower: EFFECTIVE_POWER_METER_DP,
     soc: `${ZENDURE_BASE}.electricLevel`,
 
     // MinVol (berechnet vom Script)
@@ -361,7 +450,7 @@ const dp = {
     // Aktuelle Leistungen
     ladeleistungAktuell: `${ZENDURE_BASE}.outputPackPower`,
     entladeleistungAktuell: `${ZENDURE_BASE}.packInputPower`,
-    acEingangAktuell: `${ZENDURE_ADAPTER}.${ACE_PRODUCT_ID}.${ACE_DEVICE_ID}.gridInputPower`,
+    acEingangAktuell: `${ZENDURE_ADAPTER}.${ACE_PRODUCT_ID}.${EFFECTIVE_ACE_DEVICE_ID}.gridInputPower`,
 
     // Steuerung
     setAcMode: `${ZENDURE_BASE}.control.acMode`,
@@ -407,6 +496,24 @@ const dpSteuerung = {
 // ----------------------------------------------------------
 (function initUserDataStates() {
     const userDataStates = [
+        // Config-DPs (vor allem anderen!)
+        { id: '0_userdata.0.Zendure.Config.Discord_Webhook_URL', type: 'string', name: '🔔 Discord Webhook URL', def: '', role: 'text',
+          desc: 'Discord Webhook für Benachrichtigungen (leer = deaktiviert)' },
+        { id: '0_userdata.0.Zendure.Config.Hub_Device_ID', type: 'string', name: '🔌 HUB Device ID', def: 'ANPASSEN!!', role: 'text',
+          desc: 'Zendure HUB Device-ID (8-stellig, z.B. A1B2C3D4)' },
+        { id: '0_userdata.0.Zendure.Config.Ace_Device_ID', type: 'string', name: '🔌 ACE Device ID', def: 'ANPASSEN!!', role: 'text',
+          desc: 'Zendure ACE Device-ID (8-stellig, z.B. X1Y2Z3A4)' },
+        { id: '0_userdata.0.Zendure.Config.Battery_Pack_1_ID', type: 'string', name: '🔋 Battery Pack 1 ID', def: 'ANPASSEN!!', role: 'text',
+          desc: 'Pack-ID (15-stellig alphanumerisch) - leer lassen wenn nicht vorhanden' },
+        { id: '0_userdata.0.Zendure.Config.Battery_Pack_2_ID', type: 'string', name: '🔋 Battery Pack 2 ID', def: 'ANPASSEN!!', role: 'text',
+          desc: 'Pack-ID (15-stellig alphanumerisch) - leer lassen wenn nicht vorhanden' },
+        { id: '0_userdata.0.Zendure.Config.Battery_Pack_3_ID', type: 'string', name: '🔋 Battery Pack 3 ID', def: '', role: 'text',
+          desc: 'Pack-ID (optional) - leer lassen wenn nicht vorhanden' },
+        { id: '0_userdata.0.Zendure.Config.Battery_Pack_4_ID', type: 'string', name: '🔋 Battery Pack 4 ID', def: '', role: 'text',
+          desc: 'Pack-ID (optional) - leer lassen wenn nicht vorhanden' },
+        { id: '0_userdata.0.Zendure.Config.Power_Meter_DP', type: 'string', name: '⚡ Stromzähler Datenpunkt', def: 'ANPASSEN!!', role: 'text',
+          desc: 'Voller Pfad zum Hausverbrauchs-DP (z.B. adapter.0.device.power_current)' },
+        
         // Status-DPs
         { id: dpAkkuLeer, type: 'boolean', name: 'Akku Leer Flag', def: false, role: 'indicator' },
         { id: dpAkkuVollTag, type: 'boolean', name: 'Akku Voll am Tag', def: false, role: 'indicator' },
@@ -839,12 +946,12 @@ function recalcMinVol() {
                 if (Number.isFinite(val) && val >= 2.5 && val <= 4.0) {
                     minValues.push(val);
                     validPackCount++;
-                    logDebug(`Pack ${index + 1} (${BATTERY_PACKS[index]}): ${val.toFixed(3)}V`);
+                    logDebug(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): ${val.toFixed(3)}V`);
                 } else if (Number.isFinite(val)) {
-                    logWarn(`Pack ${index + 1} (${BATTERY_PACKS[index]}): Ungültige Spannung ${val.toFixed(3)}V (außerhalb 2.5-4.0V) - überspringe`);
+                    logWarn(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): Ungültige Spannung ${val.toFixed(3)}V (außerhalb 2.5-4.0V) - überspringe`);
                 }
             } else {
-                logDebug(`Pack ${index + 1} (${BATTERY_PACKS[index]}): Keine gültigen Daten`);
+                logDebug(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): Keine gültigen Daten`);
             }
         });
         
@@ -858,14 +965,14 @@ function recalcMinVol() {
         
         // Fallback falls alle Packs ungültig sind
         if (overallMin === Infinity || validPackCount === 0) {
-            logWarn(`⚠️ Keine gültigen Pack-minVol Werte verfügbar (${BATTERY_PACKS.length} Packs konfiguriert, ${validPackCount} gültig) - nutze Fallback 3.5V`);
+            logWarn(`⚠️ Keine gültigen Pack-minVol Werte verfügbar (${EFFECTIVE_BATTERY_PACKS.length} Packs konfiguriert, ${validPackCount} gültig) - nutze Fallback 3.5V`);
             overallMin = 3.5;
             // Alarm-DP setzen für Pack-Ausfall
             if (existsState(dpWatchdogAlarm)) {
                 setState(dpWatchdogAlarm, '⚠️ Pack-Überwachung ausgefallen - Alle Packs offline!', true);
             }
         } else {
-            logInfo(`MinVol berechnet aus ${validPackCount}/${BATTERY_PACKS.length} Packs: ${overallMin.toFixed(3)}V`);
+            logInfo(`MinVol berechnet aus ${validPackCount}/${EFFECTIVE_BATTERY_PACKS.length} Packs: ${overallMin.toFixed(3)}V`);
             // Alarm zurücksetzen wenn mindestens 1 Pack gültig
             if (existsState(dpWatchdogAlarm)) {
                 const currentAlarm = getState(dpWatchdogAlarm).val;
@@ -1266,10 +1373,15 @@ function evaluateStep(inputs) {
 // ✅ HAUPTLOGIK (läuft jede Minute, Sekunde 0)
 // ----------------------------------------------------------
 
-// Discord Startup-Test beim Script-Start
-sendDiscordStartupTest();
+// Config-Check: Script stoppt wenn Config nicht geladen wurde
+if (!CONFIG_LOADED) {
+    logError('🛑 Script wird nicht gestartet - Config fehlt oder ungültig!');
+    logError('📖 Bitte Config-DPs ausfüllen und Script neu starten.');
+} else {
+    // Discord Startup-Test beim Script-Start (nur wenn Config OK)
+    sendDiscordStartupTest();
 
-schedule('0 * * * * *', async () => {
+    schedule('0 * * * * *', async () => {
     try {
         // Error Counter Auto-Reset nach ERROR_RESET_AFTER_MS ohne Fehler
         const nowMs = Date.now();
@@ -1457,4 +1569,5 @@ schedule('0 * * * * *', async () => {
     } catch (err) {
         logError(`Fehler in Hauptlogik: ${err}`);
     }
-});
+    });
+} // Ende CONFIG_LOADED Guard

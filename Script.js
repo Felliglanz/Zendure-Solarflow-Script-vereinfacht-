@@ -1,7 +1,7 @@
 /************************************************************
  * ZENDURE LADE-/ENTLADELOGIK – ioBroker JavaScript
  * ----------------------------------------------------------
- * Version: 2.1 | Datum: 2025-12-26
+ * Version: 2.00 VEREINFACHT | Datum: 2025-12-21
  * 
  * Beschreibung:
  *  Vereinfachte Steuerung eines Zendure Solarflow Systems mit 2 Modi,
@@ -73,25 +73,40 @@
  ************************************************************/
 
 // ╔══════════════════════════════════════════════════════════════════════╗
-// ║                    🔧 KONFIGURATION                                     ║
-// ║  Alle Einstellungen erfolgen über ioBroker Datenpunkte!              ║
-// ║  0_userdata.0.Zendure.Config/ → Device IDs, Packs, Sensoren         ║
-// ║  0_userdata.0.Zendure.Steuerung/ → Betriebsparameter                 ║
+// ║                    🔧 USER KONFIGURATION                              ║
+// ║  WICHTIG: Diese Werte MÜSSEN an deine Anlage angepasst werden!      ║
+// ║  Weitere Einstellungen: ioBroker DPs in 0_userdata.0.Zendure.Steuerung ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 
-// ✅ ADAPTER & PRODUCT IDs (statisch, bei allen Zendure-Geräten gleich)
+// 1️⃣ ZENDURE DEVICES
 const ZENDURE_ADAPTER = 'zendure-solarflow.0';
 const HUB_PRODUCT_ID = '73bkTV';      // HUB1200 Product-ID
+const HUB_DEVICE_ID = 'xxxxxxxx';     // HUB1200 Device-ID (ANPASSEN!)
 const ACE_PRODUCT_ID = '8bM93H';      // ACE1500 Product-ID
+const ACE_DEVICE_ID = 'xxxxxxxx';     // ACE1500 Device-ID (ANPASSEN!)
 
-// ✅ ASTRO VARIABLEN (Standard-Pfade, normalerweise bei allen gleich)
+// 2️⃣ BATTERY PACKS (2-4+ möglich)
+// Pack-IDs findest du unter: zendure-solarflow.0.{HUB}.{DEVICE}.packData.{PACK_ID}.minVol
+const BATTERY_PACKS = [
+    'xxxxxxxxxxxxxxx',
+    'xxxxxxxxxxxxxxx',
+    'xxxxxxxxxxxxxxx',
+    'xxxxxxxxxxxxxxx'
+];
+
+// 3️⃣ STROMZÄHLER (positiv = Bezug, negativ = Einspeisung)
+// Beispiele: Sonoff POWR3, Shelly 3EM, Tasmota
+const POWER_METER_DP = 'sonoff.0.Lesekopf.MT691_Power_curr';
+
+// 4️⃣ ASTRO VARIABLEN (werden vom JS-Adapter erstellt)
 const ASTRO_SUNRISE_DP = 'javascript.0.variables.astro.sunrise';
 const ASTRO_SUNSET_DP = 'javascript.0.variables.astro.sunset';
 
-// ✅ LOGGING & DEBUG
+// 5️⃣ LOGGING & DEBUG
 const LOG_LEVEL = 2;          // 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
 
-// ✅ DISCORD BENACHRICHTIGUNGEN (Master-Schalter & Event-Filter)
+// 6️⃣ DISCORD BENACHRICHTIGUNGEN (optional)
+const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1397965029479022672/JOAdI3CFg_6oXh7I3rpoo_yTXpuP1_K62ApcR6N9-v5lQo8Va1aFBbpFmbVEBus1Vlbq';
 const DISCORD_NOTIFICATIONS_ENABLED = true;  // Master-Schalter: true = aktiv, false = alle deaktiviert
 
 // Welche Benachrichtigungen sollen gesendet werden? (einzeln konfigurierbar)
@@ -109,110 +124,6 @@ const DISCORD_SPAM_PROTECTION_MIN = 15;  // Gleiche Meldung max. alle 15 Min
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  ⚠️  AB HIER KEINE ÄNDERUNGEN NÖTIG - Über ioBroker DPs konfigurieren ║
 // ╚══════════════════════════════════════════════════════════════════════╝
-
-// ✅ CONFIG-DPs LADEN (EINZIGE Quelle für Hardware-Config)
-// Script stoppt wenn Config fehlt oder ungültig ist!
-let CONFIG_LOADED = false;
-let EFFECTIVE_WEBHOOK_URL = '';
-let EFFECTIVE_HUB_DEVICE_ID = '';
-let EFFECTIVE_ACE_DEVICE_ID = '';
-let EFFECTIVE_BATTERY_PACKS = [];
-let EFFECTIVE_POWER_METER_DP = '';
-
-(function loadConfigFromDPs() {
-    const errors = [];
-    const warnings = [];
-    
-    try {
-        // Webhook (optional - falls leer: Discord-Benachrichtigungen deaktiviert)
-        const webhookDP = getState('0_userdata.0.Zendure.Config.Discord_Webhook_URL')?.val;
-        if (webhookDP && webhookDP.trim() !== '' && webhookDP !== 'ANPASSEN!!') {
-            EFFECTIVE_WEBHOOK_URL = webhookDP.trim();
-            logInfo('✅ Config: Discord Webhook geladen');
-        } else {
-            logInfo('ℹ️ Config: Discord Webhook nicht gesetzt - Benachrichtigungen deaktiviert');
-        }
-        
-        // Hub Device ID (PFLICHT)
-        const hubDevDP = getState('0_userdata.0.Zendure.Config.Hub_Device_ID')?.val;
-        if (hubDevDP && hubDevDP.trim() !== '' && hubDevDP !== 'ANPASSEN!!') {
-            EFFECTIVE_HUB_DEVICE_ID = hubDevDP.trim();
-            logInfo(`✅ Config: Hub Device ID = ${EFFECTIVE_HUB_DEVICE_ID}`);
-        } else {
-            errors.push('❌ Hub_Device_ID fehlt oder = "ANPASSEN!!"');
-        }
-        
-        // ACE Device ID (PFLICHT)
-        const aceDevDP = getState('0_userdata.0.Zendure.Config.Ace_Device_ID')?.val;
-        if (aceDevDP && aceDevDP.trim() !== '' && aceDevDP !== 'ANPASSEN!!') {
-            EFFECTIVE_ACE_DEVICE_ID = aceDevDP.trim();
-            logInfo(`✅ Config: ACE Device ID = ${EFFECTIVE_ACE_DEVICE_ID}`);
-        } else {
-            errors.push('❌ Ace_Device_ID fehlt oder = "ANPASSEN!!"');
-        }
-        
-        // Battery Packs (PFLICHT: min. 2)
-        const packIDs = [
-            getState('0_userdata.0.Zendure.Config.Battery_Pack_1_ID')?.val,
-            getState('0_userdata.0.Zendure.Config.Battery_Pack_2_ID')?.val,
-            getState('0_userdata.0.Zendure.Config.Battery_Pack_3_ID')?.val,
-            getState('0_userdata.0.Zendure.Config.Battery_Pack_4_ID')?.val
-        ].filter(p => p && p.trim() !== '' && p !== 'ANPASSEN!!');
-        
-        if (packIDs.length >= 2) {
-            EFFECTIVE_BATTERY_PACKS = packIDs;
-            logInfo(`✅ Config: ${packIDs.length} Battery Packs geladen`);
-        } else if (packIDs.length === 1) {
-            errors.push('❌ Nur 1 Battery Pack - mindestens 2 erforderlich!');
-        } else {
-            errors.push('❌ Keine Battery Packs definiert - mindestens 2 erforderlich!');
-        }
-        
-        // Power Meter DP (PFLICHT)
-        const meterDP = getState('0_userdata.0.Zendure.Config.Power_Meter_DP')?.val;
-        if (meterDP && meterDP.trim() !== '' && meterDP !== 'ANPASSEN!!') {
-            EFFECTIVE_POWER_METER_DP = meterDP.trim();
-            logInfo(`✅ Config: Power Meter DP = ${EFFECTIVE_POWER_METER_DP}`);
-        } else {
-            errors.push('❌ Power_Meter_DP fehlt oder = "ANPASSEN!!"');
-        }
-        
-        // Fehlerbehandlung
-        if (errors.length > 0) {
-            logError('='.repeat(70));
-            logError('🚨 CONFIG FEHLT - Script kann nicht starten!');
-            logError('='.repeat(70));
-            errors.forEach(err => logError(err));
-            logError('');
-            logError('🔧 Bitte fülle folgende Datenpunkte aus:');
-            logError('   0_userdata.0.Zendure.Config.Hub_Device_ID');
-            logError('   0_userdata.0.Zendure.Config.Ace_Device_ID');
-            logError('   0_userdata.0.Zendure.Config.Battery_Pack_1_ID');
-            logError('   0_userdata.0.Zendure.Config.Battery_Pack_2_ID');
-            logError('   0_userdata.0.Zendure.Config.Power_Meter_DP');
-            logError('');
-            logError('📚 Anleitung: Siehe README.md Abschnitt "Installation"');
-            logError('='.repeat(70));
-            
-            // Script-Stop setzen
-            setState('0_userdata.0.Zendure.Steuerung.Stop', true, true);
-            CONFIG_LOADED = false;
-            return;
-        }
-        
-        CONFIG_LOADED = true;
-        logInfo('✅ ✅ ✅ Config-DPs erfolgreich geladen - Script bereit!');
-        
-    } catch (err) {
-        logError(`🚨 Kritischer Fehler beim Laden der Config: ${err}`);
-        logError('Script wird gestoppt. Bitte Config-DPs prüfen!');
-        setState('0_userdata.0.Zendure.Steuerung.Stop', true, true);
-        CONFIG_LOADED = false;
-    }
-})();
-
-// Discord Webhook aus Config übernehmen
-const DISCORD_WEBHOOK_URL_EFFECTIVE = EFFECTIVE_WEBHOOK_URL;
 
 // ✅ LOGGING SYSTEM
 function logError(msg) { log(`❌ ERROR: ${msg}`); }
@@ -232,7 +143,7 @@ const discordLastSent = {};
  */
 function sendDiscordNotification(message, level = 'info', notifyType = null) {
     // Master-Schalter prüfen
-    if (!DISCORD_NOTIFICATIONS_ENABLED || !DISCORD_WEBHOOK_URL_EFFECTIVE) return;
+    if (!DISCORD_NOTIFICATIONS_ENABLED || !DISCORD_WEBHOOK_URL) return;
     
     // Spam-Schutz: Prüfe ob genug Zeit seit letzter gleicher Meldung vergangen ist
     if (notifyType && discordLastSent[notifyType]) {
@@ -270,7 +181,7 @@ function sendDiscordNotification(message, level = 'info', notifyType = null) {
         // node-fetch für HTTP POST Request an Discord Webhook (ioBroker-kompatibel)
         const fetch = require('node-fetch');
         
-        fetch(DISCORD_WEBHOOK_URL_EFFECTIVE, {
+        fetch(DISCORD_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -417,13 +328,13 @@ const DEFAULT_SUNSET_OFFSET_MIN = 0;
 // ----------------------------------------------------------
 // ✅ DATENPUNKTE (aus User-Config generiert)
 // ----------------------------------------------------------
-// Basis-Pfade aus User-Config (mit Effective IDs aus Config-DPs)
-const ZENDURE_BASE = `${ZENDURE_ADAPTER}.${HUB_PRODUCT_ID}.${EFFECTIVE_HUB_DEVICE_ID}`;
+// Basis-Pfade aus User-Config
+const ZENDURE_BASE = `${ZENDURE_ADAPTER}.${HUB_PRODUCT_ID}.${HUB_DEVICE_ID}`;
 const ZENDURE_PACK_BASE = `${ZENDURE_BASE}.packData`;
 
-// Dynamisch Pack-DPs aus EFFECTIVE_BATTERY_PACKS Array erzeugen (aus Config-DPs)
+// Dynamisch Pack-DPs aus BATTERY_PACKS Array erzeugen
 const packDPs = {};
-EFFECTIVE_BATTERY_PACKS.forEach((packId, index) => {
+BATTERY_PACKS.forEach((packId, index) => {
     if (packId && packId.trim() !== '') {
         packDPs[`pack${index + 1}MinVol`] = `${ZENDURE_PACK_BASE}.${packId}.minVol`;
     }
@@ -431,7 +342,7 @@ EFFECTIVE_BATTERY_PACKS.forEach((packId, index) => {
 
 const dp = {
     // Sensoren
-    hausPower: EFFECTIVE_POWER_METER_DP,
+    hausPower: POWER_METER_DP,
     soc: `${ZENDURE_BASE}.electricLevel`,
 
     // MinVol (berechnet vom Script)
@@ -450,7 +361,7 @@ const dp = {
     // Aktuelle Leistungen
     ladeleistungAktuell: `${ZENDURE_BASE}.outputPackPower`,
     entladeleistungAktuell: `${ZENDURE_BASE}.packInputPower`,
-    acEingangAktuell: `${ZENDURE_ADAPTER}.${ACE_PRODUCT_ID}.${EFFECTIVE_ACE_DEVICE_ID}.gridInputPower`,
+    acEingangAktuell: `${ZENDURE_ADAPTER}.${ACE_PRODUCT_ID}.${ACE_DEVICE_ID}.gridInputPower`,
 
     // Steuerung
     setAcMode: `${ZENDURE_BASE}.control.acMode`,
@@ -496,24 +407,6 @@ const dpSteuerung = {
 // ----------------------------------------------------------
 (function initUserDataStates() {
     const userDataStates = [
-        // Config-DPs (vor allem anderen!)
-        { id: '0_userdata.0.Zendure.Config.Discord_Webhook_URL', type: 'string', name: '🔔 Discord Webhook URL', def: '', role: 'text',
-          desc: 'Discord Webhook für Benachrichtigungen (leer = deaktiviert)' },
-        { id: '0_userdata.0.Zendure.Config.Hub_Device_ID', type: 'string', name: '🔌 HUB Device ID', def: 'ANPASSEN!!', role: 'text',
-          desc: 'Zendure HUB Device-ID (8-stellig, z.B. A1B2C3D4)' },
-        { id: '0_userdata.0.Zendure.Config.Ace_Device_ID', type: 'string', name: '🔌 ACE Device ID', def: 'ANPASSEN!!', role: 'text',
-          desc: 'Zendure ACE Device-ID (8-stellig, z.B. X1Y2Z3A4)' },
-        { id: '0_userdata.0.Zendure.Config.Battery_Pack_1_ID', type: 'string', name: '🔋 Battery Pack 1 ID', def: 'ANPASSEN!!', role: 'text',
-          desc: 'Pack-ID (15-stellig alphanumerisch) - leer lassen wenn nicht vorhanden' },
-        { id: '0_userdata.0.Zendure.Config.Battery_Pack_2_ID', type: 'string', name: '🔋 Battery Pack 2 ID', def: 'ANPASSEN!!', role: 'text',
-          desc: 'Pack-ID (15-stellig alphanumerisch) - leer lassen wenn nicht vorhanden' },
-        { id: '0_userdata.0.Zendure.Config.Battery_Pack_3_ID', type: 'string', name: '🔋 Battery Pack 3 ID', def: '', role: 'text',
-          desc: 'Pack-ID (optional) - leer lassen wenn nicht vorhanden' },
-        { id: '0_userdata.0.Zendure.Config.Battery_Pack_4_ID', type: 'string', name: '🔋 Battery Pack 4 ID', def: '', role: 'text',
-          desc: 'Pack-ID (optional) - leer lassen wenn nicht vorhanden' },
-        { id: '0_userdata.0.Zendure.Config.Power_Meter_DP', type: 'string', name: '⚡ Stromzähler Datenpunkt', def: 'ANPASSEN!!', role: 'text',
-          desc: 'Voller Pfad zum Hausverbrauchs-DP (z.B. adapter.0.device.power_current)' },
-        
         // Status-DPs
         { id: dpAkkuLeer, type: 'boolean', name: 'Akku Leer Flag', def: false, role: 'indicator' },
         { id: dpAkkuVollTag, type: 'boolean', name: 'Akku Voll am Tag', def: false, role: 'indicator' },
@@ -692,10 +585,23 @@ function setIfChanged(id, value) {
                 // Bei MAX_ERRORS_BEFORE_STOP: Script stoppen
                 if (errorCounter >= MAX_ERRORS_BEFORE_STOP) {
                     logError(`KRITISCH: ${errorCounter} konsekutive Fehler - Script wird gestoppt!`);
+                    
+                    // 🛡️ SAFE-STOP: Device ERST in Standby setzen, DANN stoppen
+                    logError(`🛡️ SAFE-STOP: Setze Device auf Standby (0W Laden/Entladen)`);
+                    try {
+                        setState(dp.setSmartMode, true, false);
+                        setState(dp.setAcMode, 1, false);
+                        setState(dp.setInputLimit, 0, false);
+                        setState(dp.setOutputLimit, 0, false);
+                        setState(dpModusAktuell, 'FEHLER-STOP (Standby)', true);
+                    } catch (e) {
+                        logError(`Fehler beim Safe-Stop: ${e}`);
+                    }
+                    
                     // 🔔 Discord: Script gestoppt (max. Fehler erreicht)
                     if (DISCORD_NOTIFY.scriptStopped) {
                         sendDiscordNotification(
-                            `🛑 **Script gestoppt!**\n❌ ${errorCounter} Fehler erreicht`,
+                            `🛑 **Script gestoppt!**\n❌ ${errorCounter} Fehler erreicht\n🛡️ Device auf Standby gesetzt`,
                             'critical',
                             'scriptStopped'
                         );
@@ -946,12 +852,12 @@ function recalcMinVol() {
                 if (Number.isFinite(val) && val >= 2.5 && val <= 4.0) {
                     minValues.push(val);
                     validPackCount++;
-                    logDebug(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): ${val.toFixed(3)}V`);
+                    logDebug(`Pack ${index + 1} (${BATTERY_PACKS[index]}): ${val.toFixed(3)}V`);
                 } else if (Number.isFinite(val)) {
-                    logWarn(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): Ungültige Spannung ${val.toFixed(3)}V (außerhalb 2.5-4.0V) - überspringe`);
+                    logWarn(`Pack ${index + 1} (${BATTERY_PACKS[index]}): Ungültige Spannung ${val.toFixed(3)}V (außerhalb 2.5-4.0V) - überspringe`);
                 }
             } else {
-                logDebug(`Pack ${index + 1} (${EFFECTIVE_BATTERY_PACKS[index]}): Keine gültigen Daten`);
+                logDebug(`Pack ${index + 1} (${BATTERY_PACKS[index]}): Keine gültigen Daten`);
             }
         });
         
@@ -965,14 +871,14 @@ function recalcMinVol() {
         
         // Fallback falls alle Packs ungültig sind
         if (overallMin === Infinity || validPackCount === 0) {
-            logWarn(`⚠️ Keine gültigen Pack-minVol Werte verfügbar (${EFFECTIVE_BATTERY_PACKS.length} Packs konfiguriert, ${validPackCount} gültig) - nutze Fallback 3.5V`);
+            logWarn(`⚠️ Keine gültigen Pack-minVol Werte verfügbar (${BATTERY_PACKS.length} Packs konfiguriert, ${validPackCount} gültig) - nutze Fallback 3.5V`);
             overallMin = 3.5;
             // Alarm-DP setzen für Pack-Ausfall
             if (existsState(dpWatchdogAlarm)) {
                 setState(dpWatchdogAlarm, '⚠️ Pack-Überwachung ausgefallen - Alle Packs offline!', true);
             }
         } else {
-            logInfo(`MinVol berechnet aus ${validPackCount}/${EFFECTIVE_BATTERY_PACKS.length} Packs: ${overallMin.toFixed(3)}V`);
+            logInfo(`MinVol berechnet aus ${validPackCount}/${BATTERY_PACKS.length} Packs: ${overallMin.toFixed(3)}V`);
             // Alarm zurücksetzen wenn mindestens 1 Pack gültig
             if (existsState(dpWatchdogAlarm)) {
                 const currentAlarm = getState(dpWatchdogAlarm).val;
@@ -1373,15 +1279,10 @@ function evaluateStep(inputs) {
 // ✅ HAUPTLOGIK (läuft jede Minute, Sekunde 0)
 // ----------------------------------------------------------
 
-// Config-Check: Script stoppt wenn Config nicht geladen wurde
-if (!CONFIG_LOADED) {
-    logError('🛑 Script wird nicht gestartet - Config fehlt oder ungültig!');
-    logError('📖 Bitte Config-DPs ausfüllen und Script neu starten.');
-} else {
-    // Discord Startup-Test beim Script-Start (nur wenn Config OK)
-    sendDiscordStartupTest();
+// Discord Startup-Test beim Script-Start
+sendDiscordStartupTest();
 
-    schedule('0 * * * * *', async () => {
+schedule('0 * * * * *', async () => {
     try {
         // Error Counter Auto-Reset nach ERROR_RESET_AFTER_MS ohne Fehler
         const nowMs = Date.now();
@@ -1393,10 +1294,57 @@ if (!CONFIG_LOADED) {
         
         // Stop-Check: Script pausieren
         const scriptStop = getState(dpSteuerung.stop).val;
+        
+        // ⚡ NOTFALL-BYPASS: Auch bei Stop=TRUE muss Notladen funktionieren!
+        // MinVol vorläufig lesen für Notfall-Check
+        let minVolNotfall = safeNumber(getState(dp.minVol).val, null);
+        if (minVolNotfall === null || minVolNotfall < 1.5 || minVolNotfall > 4.5) {
+            minVolNotfall = 2.0; // Sicherer Fallback
+        }
+        
+        // Notfall-Schwelle aus DP lesen (gleiche Logik wie checkNotladen)
+        const schlechtWetter = getState(dpSteuerung.schlechtWetter).val === true;
+        const dpNotladeNotfall = schlechtWetter ? dpSteuerung.minVolNotladeSchlecht : dpSteuerung.minVolNotlade;
+        const defaultNotladeNotfall = schlechtWetter ? 3.05 : DEFAULT_MINVOL_NOTLADE;
+        const minVolNotladeSchwelle = validateConfig('MinVol_Notlade_Schwelle',
+            safeNumber(getState(dpNotladeNotfall).val), 2.90, 3.15, defaultNotladeNotfall);
+        
+        // 🚨 NOTLADEN ERZWINGEN wenn Stop=TRUE ABER minVol kritisch!
+        if (scriptStop === true && minVolNotfall <= minVolNotladeSchwelle) {
+            logError(`🚨🚨🚨 NOTFALL: Script gestoppt ABER MinVol=${minVolNotfall.toFixed(3)}V <= ${minVolNotladeSchwelle.toFixed(3)}V!`);
+            logError(`⚡ NOTLADEN WIRD ERZWUNGEN - Akkuschutz hat ABSOLUTE PRIORITÄT!`);
+            
+            // Direkt Device setzen (ohne evaluateStep)
+            setIfChanged(dp.setSmartMode, true);
+            setIfChanged(dp.setAcMode, NOTLADE_ACMODE);
+            setIfChanged(dp.setInputLimit, NOTLADE_INPUT);
+            setIfChanged(dp.setOutputLimit, NOTLADE_OUTPUT);
+            setIfChanged(dpModusAktuell, 'NOTFALL-NOTLADEN (gestoppt)');
+            
+            // Discord-Alarm
+            if (DISCORD_NOTIFY.notladen) {
+                sendDiscordNotification(
+                    `🚨 **NOTFALL-NOTLADEN!**\n⚠️ Script gestoppt aber MinVol=${minVolNotfall.toFixed(3)}V kritisch!\n⚡ Notladen erzwungen - Akkuschutz hat Vorrang!`,
+                    'critical',
+                    'notladen'
+                );
+            }
+            
+            return; // Keine weitere Logik, nur Notladen
+        }
+        
+        // Normaler Stop: SAFE-STOP - Device auf Standby (0W) wenn nicht schon geschehen
         if (scriptStop === true) {
-            setIfChanged(dpModusAktuell, 'GESTOPPT');
-            logDebug('Script gestoppt durch Stop-Flag');
-            return;
+            logWarn(`Script gestoppt - setze Device auf sicheren Standby (0W Laden/Entladen)`);
+            
+            // Sicherstellen dass Device im Standby ist (0W überall)
+            setIfChanged(dp.setSmartMode, true);
+            setIfChanged(dp.setAcMode, 1);  // AC-Modus (für ev. späteres Notladen)
+            setIfChanged(dp.setInputLimit, 0);   // Kein Laden
+            setIfChanged(dp.setOutputLimit, 0);  // Kein Entladen
+            setIfChanged(dpModusAktuell, 'GESTOPPT (Standby)');
+            
+            return; // Script läuft nicht weiter
         }
 
         // Device-Werte lesen + Sensor-Validierung
@@ -1404,8 +1352,22 @@ if (!CONFIG_LOADED) {
             safeNumber(getState(dp.hausPower).val), -10000, 10000, 0);
         const soc = validateConfig('SOC (Sensor)',
             safeNumber(getState(dp.soc).val), 0, 100, 50);
-        const minVol = validateConfig('MinVol (Sensor)',
-            safeNumber(getState(dp.minVol).val), 2.5, 4.0, 3.5);
+        
+        // MinVol OHNE Range-Limit - auch kritische Werte unter 2.5V durchlassen für Notladen!
+        let minVol = safeNumber(getState(dp.minVol).val, null);
+        
+        // Bei Sensor-Ausfall: NOTFALL-Fallback 2.0V (erzwingt Notladen statt 3.5V!)
+        if (minVol === null || minVol < 1.5 || minVol > 4.5) {
+            logError(`🚨 KRITISCH: MinVol ungültig (${minVol}V) - Sensor-Ausfall!`);
+            logError(`🛡️ SICHERHEIT: Fallback 2.0V aktiviert → erzwingt Notladen + blockiert Entladen`);
+            minVol = 2.0;  // Garantiert Notladen bei <= 3.0V + Entladestopp bei <= 3.1V
+            if (existsState(dpWatchdogAlarm)) {
+                setState(dpWatchdogAlarm, '🚨 MinVol-Sensor ausgefallen! Notladen erzwungen', true);
+            }
+        }
+        
+        logInfo(`🔋 MinVol: ${minVol.toFixed(3)}V (Notladen bei <= 3.0V, Entladestopp bei <= 3.1V)`);
+        
         const smartMode = getState(dp.smartMode).val;
         
         // Zeit-Sensoren mit Fallback (06:00 / 18:00 bei Ausfall)
@@ -1569,5 +1531,4 @@ if (!CONFIG_LOADED) {
     } catch (err) {
         logError(`Fehler in Hauptlogik: ${err}`);
     }
-    });
-} // Ende CONFIG_LOADED Guard
+});
